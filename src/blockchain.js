@@ -63,7 +63,19 @@ class Blockchain {
   _addBlock(block) {
     let self = this;
     return new Promise(async (resolve, reject) => {
-        
+      const newBlock = block;
+      let height = self.height;
+      newBlock.height = ++height;
+      newBlock.time = new Date().getTime().toString().slice(0, -3);
+      if (height >= 0) {
+        newBlock.previousBlockHash = self.chain[self.height].hash;
+        newBlock.hash = SHA256(JSON.stringify(newBlock)).toString();
+      } else {
+        newBlock.hash = SHA256(JSON.stringify(newBlock)).toString();
+      }
+      self.chain.push(newBlock);
+      self.height = self.chain.length - 1;
+      resolve(newBlock);
     });
   }
 
@@ -76,7 +88,14 @@ class Blockchain {
    * @param {*} address
    */
   requestMessageOwnershipVerification(address) {
-    return new Promise((resolve) => {});
+    return new Promise((resolve) => {
+      resolve(
+        `${address}:${new Date()
+          .getTime()
+          .toString()
+          .slice(0, -3)}:starRegistry`
+      );
+    });
   }
 
   /**
@@ -98,7 +117,30 @@ class Blockchain {
    */
   submitStar(address, message, signature, star) {
     let self = this;
-    return new Promise(async (resolve, reject) => {});
+    return new Promise(async (resolve, reject) => {
+      const messageTime = parseInt(message.split(":")[1]);
+      const currentTime = parseInt(
+        new Date().getTime().toString().slice(0, -3)
+      );
+      const elapsedTime = currentTime - messageTime;
+      const messageExpiryThreshold = 60 * 5;
+      if (elapsedTime < messageExpiryThreshold) {
+        const isValidMessage = bitcoinMessage.verify(
+          message,
+          address,
+          signature
+        );
+        if (isValidMessage) {
+          let newBlock = new BlockClass.Block({ owner: address, star });
+          newBlock = await this._addBlock(newBlock);
+          resolve(newBlock);
+        } else {
+          reject(new Error("Error! provided message is not valid"));
+        }
+      } else {
+        reject(new Error("Error! message is older than 5 minutes threshold"));
+      }
+    });
   }
 
   /**
@@ -114,8 +156,7 @@ class Blockchain {
       if (foundBlock) {
         resolve(foundBlock);
       } else {
-        //reject(new Error("Error! no block found with hash:", hash));
-        resolve(null);
+        reject(new Error("Error! no block found with hash: ", hash));
       }
     });
   }
@@ -128,11 +169,11 @@ class Blockchain {
   getBlockByHeight(height) {
     let self = this;
     return new Promise((resolve, reject) => {
-      let block = self.chain.filter((p) => p.height === height)[0];
+      let block = self.chain.find((p) => p.height === height);
       if (block) {
         resolve(block);
       } else {
-        resolve(null);
+        reject(new Error("Error! no block found with height: ", height));
       }
     });
   }
@@ -146,7 +187,15 @@ class Blockchain {
   getStarsByWalletAddress(address) {
     let self = this;
     let stars = [];
-    return new Promise((resolve, reject) => {});
+    return new Promise((resolve, reject) => {
+      stars = self.chain.filter((block) => block.owner === address);
+      if (stars && stars.length > 0) {
+        stars = stars.map((star) => await star.getBData());
+        resolve(stars);
+      } else {
+        reject("Error! no stars found for address: ", address);
+      }
+    });
   }
 
   /**
@@ -158,7 +207,31 @@ class Blockchain {
   validateChain() {
     let self = this;
     let errorLog = [];
-    return new Promise(async (resolve, reject) => {});
+    return new Promise(async (resolve, reject) => {
+      self.chain.forEach((block) => {
+        if (await block.validate()) {
+          if (block.height > 0) {
+            const previousBlock = self.chain.find(
+              (b) => b.height === block.height - 1
+            );
+            if (block.previousBlockHash !== previousBlock.hash) {
+              errorLog.push({
+                hash: block.hash,
+                height: block.height,
+                message: "Error! block hash invalid",
+              });
+            }
+          }
+        } else {
+          errorLog.push({
+            hash: block.hash,
+            height: block.height,
+            message: "Error! block invalid",
+          });
+        }
+      });
+      resolve(errorLog);
+    });
   }
 }
 
