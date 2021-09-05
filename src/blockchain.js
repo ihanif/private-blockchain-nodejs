@@ -62,20 +62,22 @@ class Blockchain {
    */
   _addBlock(block) {
     let self = this;
-    return new Promise(async (resolve, reject) => {
-      const newBlock = block;
-      let height = self.height;
-      newBlock.height = ++height;
-      newBlock.time = new Date().getTime().toString().slice(0, -3);
-      if (height >= 0) {
-        newBlock.previousBlockHash = self.chain[self.height].hash;
-        newBlock.hash = SHA256(JSON.stringify(newBlock)).toString();
+    return new Promise((resolve, reject) => {
+      let height = self.chain.length;
+      block.height = height;
+      block.time = new Date().getTime().toString().slice(0, -3);
+      block.previousBlockHash = self.chain[height - 1]
+        ? self.chain[height - 1].hash
+        : null;
+      block.hash = SHA256(JSON.stringify(block)).toString();
+      self.chain.push(block);
+      self.height = self.chain.length;
+
+      if (block) {
+        resolve(block);
       } else {
-        newBlock.hash = SHA256(JSON.stringify(newBlock)).toString();
+        reject(new Error("Error! coudn't create new block"));
       }
-      self.chain.push(newBlock);
-      self.height = self.chain.length - 1;
-      resolve(newBlock);
     });
   }
 
@@ -117,6 +119,15 @@ class Blockchain {
    */
   submitStar(address, message, signature, star) {
     let self = this;
+    this.validateChain().then((errors) => {
+      if (Array.isArray(errors) && errors.length > 0) {
+        errors.forEach((error) => console.log(error.hash, ": ", error.message));
+        return new Error("Error! can't submit new star to invalid blockchain");
+      } else {
+        console.log("Success! chain valid");
+      }
+    });
+
     return new Promise(async (resolve, reject) => {
       const messageTime = parseInt(message.split(":")[1]);
       const currentTime = parseInt(
@@ -131,13 +142,15 @@ class Blockchain {
           signature
         );
         if (isValidMessage) {
-          let newBlock = new BlockClass.Block({ owner: address, star });
-          newBlock = await this._addBlock(newBlock);
+          let newBlock = new BlockClass.Block({ star: star, owner: address });
+          newBlock = await self._addBlock(newBlock);
           resolve(newBlock);
         } else {
+          console.error("Error! provided message is not valid");
           reject(new Error("Error! provided message is not valid"));
         }
       } else {
+        console.error("Error! message is older than 5 minutes threshold");
         reject(new Error("Error! message is older than 5 minutes threshold"));
       }
     });
@@ -187,13 +200,20 @@ class Blockchain {
   getStarsByWalletAddress(address) {
     let self = this;
     let stars = [];
-    return new Promise((resolve, reject) => {
-      stars = self.chain.filter((block) => block.owner === address);
-      if (stars && stars.length > 0) {
-        stars = stars.map((star) => await star.getBData());
+    return new Promise(async (resolve, reject) => {
+      try {
+        for (let block of self.chain) {
+          if (block.height === 0) {
+            continue;
+          }
+          const blockData = await block.getBData();
+          if (blockData.owner && blockData.owner === address) {
+            stars.push(blockData);
+          }
+        }
         resolve(stars);
-      } else {
-        reject("Error! no stars found for address: ", address);
+      } catch (e) {
+        reject(new Error("Error! no stars found for address: ", address));
       }
     });
   }
@@ -208,29 +228,38 @@ class Blockchain {
     let self = this;
     let errorLog = [];
     return new Promise(async (resolve, reject) => {
-      self.chain.forEach((block) => {
-        if (await block.validate()) {
-          if (block.height > 0) {
-            const previousBlock = self.chain.find(
-              (b) => b.height === block.height - 1
-            );
-            if (block.previousBlockHash !== previousBlock.hash) {
-              errorLog.push({
-                hash: block.hash,
-                height: block.height,
-                message: "Error! block hash invalid",
-              });
+      try {
+        for (let block of self.chain) {
+          if (await block.validate()) {
+            if (block.height > 0) {
+              const previousBlock = self.chain.find(
+                (b) => b.height === block.height - 1
+              );
+              if (
+                !previousBlock.hash ||
+                block.previousBlockHash !== previousBlock.hash
+              ) {
+                errorLog.push({
+                  hash: block.hash,
+                  height: block.height,
+                  message: "Error! block hash invalid",
+                });
+              }
             }
+          } else {
+            errorLog.push({
+              hash: block.hash,
+              height: block.height,
+              message: "Error! block invalid",
+            });
           }
-        } else {
-          errorLog.push({
-            hash: block.hash,
-            height: block.height,
-            message: "Error! block invalid",
-          });
         }
-      });
-      resolve(errorLog);
+        resolve(errorLog);
+      } catch (e) {
+        reject(
+          new Error("Error! blockchain validation failed with error:  ", e)
+        );
+      }
     });
   }
 }

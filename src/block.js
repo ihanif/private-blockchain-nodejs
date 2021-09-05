@@ -38,13 +38,12 @@ class Block {
     let self = this;
     return new Promise((resolve, reject) => {
       // Save in auxiliary variable the current block hash
-      let currentBlockHash = self.hash;
-      self.hash = null;
+      const currentBlockHash = self.hash;
 
       // Recalculate the hash of the Block
-      const calculatedHash = SHA256(self);
+      self.hash = SHA256(JSON.stringify({ ...self, hash: null })).toString();
       // Comparing if the hashes changed
-      if (currentBlockHash !== calculatedHash) {
+      if (currentBlockHash !== self.hash) {
         // Returning the Block is not valid
         resolve(false);
       } else {
@@ -71,8 +70,9 @@ class Block {
     // Parse the data to an object to be retrieve.
     blockData = JSON.parse(blockData);
     // Resolve with the data if the object isn't the Genesis block
+    let self = this;
     return new Promise((resolve, reject) => {
-      if (blockData.height > 0) {
+      if (self.height > 0) {
         resolve(blockData);
       } else {
         reject(new Error("Error! Genisis block"));
